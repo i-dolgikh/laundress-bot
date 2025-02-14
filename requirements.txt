@@ -1,7 +1,9 @@
-aiogram==2.25.1
+aiogram == 3.17.0 #==2.25.1 (Переделал)
 gspread==5.10.0
 google-auth==2.21.0
 google-auth-oauthlib==1.0.0
 apscheduler==3.10.4
+asyncio == 3.4.3
+#DateTime-4.0
 
 #pip install -r requirements.txt
