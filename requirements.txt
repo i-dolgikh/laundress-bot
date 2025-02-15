@@ -4,6 +4,6 @@ google-auth==2.21.0
 google-auth-oauthlib==1.0.0
 apscheduler==3.10.4
 asyncio == 3.4.3
-#DateTime-4.0
+DateTime~=5.5
 
 #pip install -r requirements.txt

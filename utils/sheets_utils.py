@@ -2,6 +2,7 @@
 import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta
+from configs.config import SERVICE_SHEET_URL
 
 # Подключение к Google Sheets
 def connect_to_google_sheets(service_account_file):
@@ -11,21 +12,19 @@ def connect_to_google_sheets(service_account_file):
     return client
 
 # Получение листа по дате
-def get_sheet_by_date(client, sheet_url, date):
+def get_sheet_by_date(client, schedule_sheet_url, date):
     sheet_name = date.strftime('%d.%m.%y (%a)')
-    spreadsheet = client.open_by_url(sheet_url)
+    spreadsheet = client.open_by_url(schedule_sheet_url)
     try:
         sheet = spreadsheet.worksheet(sheet_name)
 
-    except gspread.exceptions.WorksheetNotFound:
-        #Если не находим дату, создаем новый лист
+    except gspread.exceptions.WorksheetNotFound: # Если не находим дату, создаем новый лист
+
         sheet = spreadsheet.add_worksheet(title=sheet_name, rows=100, cols=6)
         sheet.append_row(['Время', 'Машинка', 'Имя', 'Дата подачи', 'Комната', 'Telegram ID'])
 
-        # Определяем диапазон столбца
+        # Скрываем от просмотра ID
         sheet_id = sheet._properties['sheetId']
-
-
         request_body_for_hide_id = {
             "requests": [
                 {
@@ -33,7 +32,7 @@ def get_sheet_by_date(client, sheet_url, date):
                         "range": {
                             "sheetId": sheet_id,
                             "dimension": "COLUMNS",
-                            "startIndex": 5,  # Индекс столбца (начинается с 0)
+                            "startIndex": 5,  # Индекс столбца (с 0)
                             "endIndex": 6  # Конечный индекс (не включается)
                         },
                         "properties": {
@@ -47,6 +46,37 @@ def get_sheet_by_date(client, sheet_url, date):
 
         # Отправляем запрос на обновление свойств
         spreadsheet.batch_update(request_body_for_hide_id)
+
+        """
+        Получаем данные о расписании дня недели
+        Получаем данные о машинках и их шагах
+        Заполняем слоты
+        !!!Нерабочие дни надо словить через try
+        """
+
+        service_sheets = client.open_by_url(SERVICE_SHEET_URL)
+        machines = service_sheets.worksheet("machine info").get_all_records()
+        schedules = service_sheets.worksheet("schedule").get_all_records()
+
+        start_time = None
+        end_time = None
+
+        try:
+            for schedule in schedules:
+                if schedule["День недели "] == date.strftime('%a'):
+                    start_time = datetime.strptime(schedule["Открытие"], "%H:%M")
+                    end_time = datetime.strptime(schedule["Закрытие"], "%H:%M")
+                    break
+        except: # Не работает в этот день недели
+            return sheet
+
+        for machine in machines:
+            duration_slot = timedelta(minutes=machine["Шаг"])
+            slot = start_time
+            while slot + duration_slot <= end_time:
+                sheet.append_row([slot.strftime("%H:%M"), machine["Машинка"]])
+                slot += duration_slot
+
 
     return sheet
 
@@ -74,22 +104,9 @@ def check_booking_limits(client, sheet_url, user_id, booking_date): # Оптим
 
     return None
 
-# Проверка оплаты и причин отказа
-def is_in_whitelist(client, sheet_url, user_id):
-    users_info_sheet = client.open_by_url(sheet_url).worksheet("users info")
-    records = users_info_sheet.get_all_records()
-    for record in records:
-        if record['Telegram ID'] == user_id:
-            if record['Причина отказа']:
-                return record['Причина отказа'] + "\n /contacts"
-            elif datetime.strptime(record['Дата последней оплаты'][3:], "%m.%y").date() < datetime.today().date() - timedelta(days=datetime.today().day):
-                return "Просрочен месяц оплаты, обратитесь к старосте своего этажа. \n /contacts"
-            else:
-                return None
-    return "Произошла ошибка, обратитесь к старосте своего этажа. \n /contacts"
 
 # Обновление настроек пользователя
-def update_user_settings(client, sheet_url, user_id, notification, name, room_number):
+def update_user_settings(client, sheet_url, user_id, notification, name, room_number): # Реализовать через изменение, а не удаление
     """
     Обновляет настройки пользователя: удаляет старые настройки и добавляет новые.
     """
@@ -105,8 +122,9 @@ def update_user_settings(client, sheet_url, user_id, notification, name, room_nu
 
     settings_sheet.append_row([user_id, name, room_number, '', notification])
 
-def get_user_settings(client, sheet_url, user_id):
-    settings_sheet = client.open_by_url(sheet_url).worksheet("users info")
+
+def get_user_settings(client, service_sheet_url, user_id):
+    settings_sheet = client.open_by_url(service_sheet_url).worksheet("users info")
     records = settings_sheet.get_all_records()
 
     # Поиск записи пользователя
@@ -115,3 +133,7 @@ def get_user_settings(client, sheet_url, user_id):
             return record
 
     return None
+
+def get_users_settings(client, service_sheet_url):
+    settings_sheet = client.open_by_url(service_sheet_url).worksheet("users info")
+    return settings_sheet.get_all_records()

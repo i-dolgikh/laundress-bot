@@ -42,13 +42,10 @@ async def process_name(message: types.Message, state: FSMContext):
     await state.update_data(user_room_number = message.text)
 
     keyboard = ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton(text="За день"),
-        KeyboardButton(text="За 3 часа"),
-        KeyboardButton(text="За час")],
-        [KeyboardButton(text="Отключить")]
+        [KeyboardButton(text="Не получать напоминания")]
     ], resize_keyboard=True)
 
-    await message.answer("Выберите, когда вы хотите получать напоминания:", reply_markup=keyboard)
+    await message.answer("Выберите, за сколько часов до стирки вы хотите получать напоминания (от 1 до 72):", reply_markup=keyboard)
 
     await state.set_state(SettingsStates.notification)
 
@@ -56,12 +53,15 @@ async def process_name(message: types.Message, state: FSMContext):
 @settings_router.message(SettingsStates.notification)
 async def process_notification(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
-    choice = message.text
+    choice = (message.text if message.text != "Не получать напоминания" else "off")
 
     # Проверяем допустимость выбора
-    valid_choices = ["За день", "За 3 часа", "За час", "Отключить"]
-    if choice not in valid_choices:
-        await message.reply("Неверный выбор. Пожалуйста, выберите один из предложенных вариантов.")
+    try:
+        if choice != "off" and not (1 <= int(choice) <= 72):
+            await message.reply("Вы ввели число вне допустимого диапазона. Пожалуйста, введите число от 1 до 72 или выберите не получать напоминания.")
+            return
+    except ValueError:
+        await message.reply("Что-то не так. Пожалуйста, введите число от 1 до 72 или выберите не получать напоминания.")
         return
 
     # Обновляем настройки пользователя
@@ -75,7 +75,7 @@ async def process_notification(message: types.Message, state: FSMContext):
     await message.answer("Настройки обновлены", reply_markup=ReplyKeyboardRemove())
 
     if choice != 'Отключить':
-        await message.reply(f"Напоминания будут приходить {choice.lower()} до стирки.")
+        await message.reply(f"Напоминания будут приходить за {choice.lower()} час(ов) до стирки.")
     else:
         await message.reply(f"Напоминания отключены")
 

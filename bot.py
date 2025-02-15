@@ -13,12 +13,10 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # Конфиги
-from configs.config import TELEGRAM_API_TOKEN, SERVICE_ACCOUNT_FILE, client
+from configs.config import TELEGRAM_API_TOKEN, client
 
 # Утилиты для google sheets
-from utils.sheets_utils import (
-    connect_to_google_sheets
-)
+
 
 # Импорт джобов
 from jobs import (
@@ -45,7 +43,7 @@ dp = Dispatcher(storage=storage)
 scheduler = AsyncIOScheduler()
 
 
-async def send_reminders():
+async def send_reminders_job():
     reminders = search_reminders(client)
 
     for reminder in reminders:
@@ -74,12 +72,12 @@ async def main():
         handlers=[logging.FileHandler("configs/bot.log"), logging.StreamHandler()]
     )
 
-    # Задача для отправки напоминаний
-    scheduler.add_job(send_reminders,
+    # Задача для отправки напоминаний (каждые 10 минут в **:*0)
+    scheduler.add_job(send_reminders_job,
         'interval',
-        minutes=10,
-        next_run_time=datetime.strptime(str(datetime.now())[:15] + '0',"%Y-%m-%d %H:%M") + timedelta(minutes=10)
-        )  # Проверяем каждые 10 минут в **:*0 (костыль из-за старой версии библиотеки)
+                      minutes=10,
+                      next_run_time=datetime.strptime(str(datetime.now())[:15] + "0","%Y-%m-%d %H:%M") + timedelta(minutes=10)  # костыль из-за старой версии библиотеки
+                      )
 
     #Задача для удаления старых листов (каждые 7 дней по понедельникам в 01:00)
     scheduler.add_job(
