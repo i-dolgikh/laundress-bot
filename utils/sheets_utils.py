@@ -1,84 +1,66 @@
-
+"""
+Переделать все под asinc
+"""
 import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta
-from configs.config import SERVICE_SHEET_URL
+from configs.config import SERVICE_SHEET_URL, SERVICE_ACCOUNT_FILE
 
 # Подключение к Google Sheets
-def connect_to_google_sheets(service_account_file):
+def connect_to_google_sheets(service_account_file = SERVICE_ACCOUNT_FILE):
     scopes = ['https://www.googleapis.com/auth/spreadsheets']
     creds = Credentials.from_service_account_file(service_account_file, scopes=scopes)
     client = gspread.authorize(creds)
     return client
 
+
 # Получение листа по дате
-def get_sheet_by_date(client, schedule_sheet_url, date):
+def get_sheet_by_date(client, schedule_sheet_url, date): # Перенести логику создания в джобы
     sheet_name = date.strftime('%d.%m.%y (%a)')
     spreadsheet = client.open_by_url(schedule_sheet_url)
     try:
-        sheet = spreadsheet.worksheet(sheet_name)
+        return spreadsheet.worksheet(sheet_name)
 
     except gspread.exceptions.WorksheetNotFound: # Если не находим дату, создаем новый лист
-
-        sheet = spreadsheet.add_worksheet(title=sheet_name, rows=100, cols=6)
-        sheet.append_row(['Время', 'Машинка', 'Имя', 'Дата подачи', 'Комната', 'Telegram ID'])
-
-        # Скрываем от просмотра ID
-        sheet_id = sheet._properties['sheetId']
-        request_body_for_hide_id = {
-            "requests": [
-                {
-                    "updateDimensionProperties": {
-                        "range": {
-                            "sheetId": sheet_id,
-                            "dimension": "COLUMNS",
-                            "startIndex": 5,  # Индекс столбца (с 0)
-                            "endIndex": 6  # Конечный индекс (не включается)
-                        },
-                        "properties": {
-                            "hiddenByUser": True  # Скрываем столбец
-                        },
-                        "fields": "hiddenByUser"
-                    }
-                }
-            ]
-        }
-
-        # Отправляем запрос на обновление свойств
-        spreadsheet.batch_update(request_body_for_hide_id)
-
-        """
-        Получаем данные о расписании дня недели
-        Получаем данные о машинках и их шагах
-        Заполняем слоты
-        !!!Нерабочие дни надо словить через try
-        """
 
         service_sheets = client.open_by_url(SERVICE_SHEET_URL)
         machines = service_sheets.worksheet("machine info").get_all_records()
         schedules = service_sheets.worksheet("schedule").get_all_records()
 
-        start_time = None
-        end_time = None
-
         try:
+            start_time, end_time = None, None
+
             for schedule in schedules:
-                if schedule["День недели "] == date.strftime('%a'):
+                if schedule["День недели"] == date.strftime('%a'):
                     start_time = datetime.strptime(schedule["Открытие"], "%H:%M")
                     end_time = datetime.strptime(schedule["Закрытие"], "%H:%M")
                     break
-        except: # Не работает в этот день недели
-            return sheet
 
-        for machine in machines:
-            duration_slot = timedelta(minutes=machine["Шаг"])
-            slot = start_time
-            while slot + duration_slot <= end_time:
-                sheet.append_row([slot.strftime("%H:%M"), machine["Машинка"]])
-                slot += duration_slot
+            if start_time is not None and end_time is not None:
+
+                sheet = spreadsheet.add_worksheet(title=sheet_name, rows=100, cols=6)
+                daily_schedule = [['Время', 'Машинка', 'Имя', 'Дата подачи', 'Комната', 'Telegram ID']]
+
+                for machine in machines:
+                    duration_slot = timedelta(minutes=machine["Шаг"])
+                    slot = start_time
+                    while slot <= end_time:
+                        daily_schedule.append([slot.strftime("%H:%M"), machine["Машинка"]])
+                        slot += duration_slot
+
+                # Добавляем расписание
+                sheet.append_rows(daily_schedule)
+                # Скрываем от просмотра ID
+                sheet.hide_columns(5, 6)
+
+                return sheet
+
+        except:  # Не работает в этот день недели
+            return None
 
 
-    return sheet
+
+
 
 # Проверка ограничений на бронирование
 def check_booking_limits(client, sheet_url, user_id, booking_date): # Оптимизировать
@@ -103,6 +85,21 @@ def check_booking_limits(client, sheet_url, user_id, booking_date): # Оптим
         return "Вы уже забронировали 2 слота на эту неделю."
 
     return None
+
+
+def update_booking_info(client, schedule_sheet_url, data):
+    booking_date = data.get("booking_date")
+    selected_machine = data.get("selected_machine")
+    selected_time = data.get("selected_time")
+    user_info = data.get("user_settings")
+
+    # Логика записи в sheets
+
+    test_mode = True
+    if test_mode:
+        return f"Тестовый режим: Бронирование завершено! Дата: {booking_date}, Время: {selected_time}, Машинка: {selected_machine}."
+    else:
+        return "Тестовый режим: Что-то пошло не так. Возможно, этот слот уже заняли"
 
 
 # Обновление настроек пользователя
@@ -133,6 +130,7 @@ def get_user_settings(client, service_sheet_url, user_id):
             return record
 
     return None
+
 
 def get_users_settings(client, service_sheet_url):
     settings_sheet = client.open_by_url(service_sheet_url).worksheet("users info")

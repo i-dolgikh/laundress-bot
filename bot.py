@@ -44,23 +44,22 @@ scheduler = AsyncIOScheduler()
 
 
 async def send_reminders_job():
-    reminders = search_reminders(client)
+    reminders = await search_reminders(client)
 
     for reminder in reminders:
         await bot.send_message(reminder["user_id"], reminder["text"])
 
 async def sorted_job():
     try:
-        sort_sheets_by_date(client)
+        await sort_sheets_by_date(client)
     except:
         pass
 
 async def delite_old_job():
     try:
-        delete_old_sheets(client)
+        await delete_old_sheets(client)
     except:
         pass
-
 
 # Запуск бота
 async def main():

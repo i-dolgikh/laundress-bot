@@ -1,16 +1,17 @@
 from datetime import datetime, timedelta
 
-from aiogram import Router, types
+from aiogram import Router, types, F
 from aiogram.filters import Command
+from aiogram.filters.callback_data import CallbackData
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
-from aiogram.types import KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove
-
-from configs.config import SERVICE_SHEET_URL, SCHEDULE_SHEET_URL, client
-from utils.sheets_utils import check_booking_limits, get_sheet_by_date, get_user_settings
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from configs.config import SERVICE_SHEET_URL, SCHEDULE_SHEET_URL
+import keyboards.keyboards as kb
+from keyboards.keyboards import BookingCallback
+from utils.sheets_utils import get_user_settings, connect_to_google_sheets
 
 booking_router = Router()
-
 
 class BookingStates(StatesGroup):
     date = State()  # Ожидание ввода даты
@@ -18,12 +19,12 @@ class BookingStates(StatesGroup):
     time = State()  # Ожидание выбора времени
 
 
-# Команда /book (бронирование)
 @booking_router.message(Command('book'))
 async def book_slot(message: types.Message, state: FSMContext):
-    user_id = message.from_user.id
 
-    # Проверка "White ID List"
+    user_id = message.from_user.id
+    client = connect_to_google_sheets()
+
     user_settings = get_user_settings(client, SERVICE_SHEET_URL, user_id)
 
     reason = "Вы не можете забронировать слот. \nПричина: {} \nОбратитесь к старосте своего этажа. \n/contacts"
@@ -32,103 +33,105 @@ async def book_slot(message: types.Message, state: FSMContext):
 
         if user_settings['Причина отказа'] or overdue or not user_settings["Дата последней оплаты"]:
             await message.reply(reason.format(user_settings['Причина отказа'] if user_settings['Причина отказа'] else "Просрочен месяц оплаты"))
-            await state.clear()
+            await state.clear() # Зачем?
             return
-    except:
-        await message.reply(reason.format("Неизвестная ошибка")) #Пройдет тогда, когда юзера не будет в таблице или нет инфы об оплате (Но я не уверен)
-        await state.clear()
-        return
-
-    await state.update_data(user_settings=user_settings) # Сохраняем user info в FSM
-    await message.reply("Введите дату в формате DD.MM.YY:")
-    await state.set_state(BookingStates.date)  # Устанавливаем состояние "ожидание даты"
-
-
-# Обработка ввода даты
-@booking_router.message(BookingStates.date)
-async def process_date(message: types.Message, state: FSMContext):
-    try:
-        booking_date = datetime.strptime(message.text, '%d.%m.%y').date()
-        if booking_date < datetime.now().date():
-            await message.reply("Нельзя бронировать прошедшие даты.")
-            return
-        if booking_date > datetime.now().date() + timedelta(days=30):
-            await message.reply("Нельзя бронировать более чем за месяц.")
-            return
-
-        # Проверяем ограничения
-        limit_error = check_booking_limits(client, SCHEDULE_SHEET_URL, message.from_user.id, booking_date) #Включить на проде
-        # if limit_error:
-        #     await message.reply(limit_error)
-        #     return
-
-        """
-        Взять sheet
-        Проверить на доступные машинки
-        Если нет сообщить и ожидать новую дату
-        сохранить дату и sheet в FSM 
-        Создать клавиатуру с доступными машинками 
-        """
-
-        # Сохраняем выбранную дату в FSM
-        await state.update_data(booking_date=message.text)
-
-
-        # Создаем клавиатуру с доступными машинками (Заглушка)
-        buttons = [[KeyboardButton(text="Машинка 1")], [KeyboardButton(text="Машинка 2")], [KeyboardButton(text="Машинка 3")]]
-        keyboard = ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True) #Добавить актуально свободные машинки на дату
-
-
-        await message.reply("Выберите машинку:", reply_markup=keyboard)
-        await state.set_state(BookingStates.machine)# Переходим к следующему состоянию
     except ValueError:
-        await message.reply("Неверный формат даты. Введите дату в формате DD.MM.YY")
-
-
-# Обработка выбора машинки
-@booking_router.message(BookingStates.machine)
-async def process_machine(message: types.Message, state: FSMContext):
-    await state.update_data(selected_machine=message.text[-1:]) #Сохранять в дб только номер машинки, а не select целиком
-    # Получаем лист для выбранной даты
-    # sheet = get_sheet_by_date(client, SCHEDULE_SHEET_URL, state.get_data().get("booking_date")) #Добавить актуально свободные слоты на дату + машинки
-
-    # Генерируем доступные временные слоты (заглушка)
-    available_slots = ["8:00", "8:40", "9:20", "00:40"]  # Пример слотов
-
-    if not available_slots:
-        await message.reply("На выбранную дату нет свободных слотов, выберите другую")
+        await message.reply(reason.format("Неизвестная ошибка")) #Пройдет тогда, когда юзера не будет в таблице или нет инфы об оплате (Но я не уверен)
+        await state.clear() # Зачем?
         return
 
-    # Создаем клавиатуру с доступными слотами
-    keyboard = ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text=slot) for slot in available_slots]],
-        resize_keyboard=True
-    )
 
-    await message.reply("Выберите время:", reply_markup=keyboard)
+    """
+    Проверка оплаты
+    Забираем данные из schedule, сохраняем в FSM
+    """
+
+    worksheets = client.open_by_url(SCHEDULE_SHEET_URL)
+    await state.update_data(worksheets=worksheets)
+
+    await start_stage(message, state)
+
+
+@booking_router.callback_query(F.data == "Back to start stage")
+async def query_start_stage(query: CallbackQuery, state: FSMContext):
+    #await state.update_data(machine=callback_data.select)
+    await start_stage(query.message, state)
+
+
+async def start_stage(message: types.Message, state: FSMContext):
+
+    kb_builder_result = await kb.build_free_date((await state.get_value("worksheets")).worksheets())
+
+    if type(kb_builder_result) == str:
+        await message.answer(text=kb_builder_result)
+        return
+    else:
+        await state.update_data(test="Тестовая дата")
+        try:
+            await message.edit_text(text="Введите дату в формате DD.MM.YY или выберите из ближайших свободных", reply_markup=kb_builder_result)
+        except:
+            await message.answer(text="Введите дату в формате DD.MM.YY или выберите из ближайших свободных", reply_markup=kb_builder_result)
+        await state.set_state(BookingStates.date)  # Устанавливаем состояние "ожидание даты"
+
+
+@booking_router.callback_query(BookingCallback.filter(F.stage == 2))
+async def query_process_date(query: CallbackQuery,  callback_data: BookingCallback, state: FSMContext):
+    await query.answer("Выполняю запрос...")
+    data = callback_data.select
+
+    await process_date(query.message, state, data)
+
+
+@booking_router.message(BookingStates.date)
+async def message_process_date(message: types.Message, state: FSMContext):
+    data = message.text
+    await message.bot.edit_message_text(text=f"Выбранная дата: {data}", message_id=message.message_id - 1, chat_id= message.chat.id) # Удаляем клавиатуру и выводим выбранную дату
+    await message.answer(text=f'{await state.get_value("test")}, {data}')
+    await process_date(message, state, data)
+
+
+async def process_date(message: types.Message, state: FSMContext, data):
+    booking_records = (await state.get_value("worksheets")).worksheet(data).get_all_records()
+    keyboard = await kb.build_free_machine(booking_records)
+
+
+    """
+    Проверяем ограничения на неделю (Если ограничение нарушено await query.message.edit_text("На эту неделю вы уже забронировали 2 слота" и завершаем сосотояние return))
+    обновляем данные в FSM
+    генерируем клавиатуру по машинкам
+    регистрируем новое состояние
+    """
+
+    await message.edit_text(text=f'{await state.get_value("test")}, {data}', reply_markup=keyboard)
+    await state.set_state()
+
+
+@booking_router.callback_query(BookingCallback.filter(F.stage == 3))
+
+async def process_machine(query: CallbackQuery, state: FSMContext, callback_data: BookingCallback):
+
+    """
+    Ловим callback со stage 2
+    обновляем данные в FSM
+    генерируем клавиатуру по слотам
+    регистрируем новое состояние
+    """
+
     await state.set_state(BookingStates.time) # Переходим к следующему состоянию
 
 
-# Обработка выбора времени
-@booking_router.message(BookingStates.time)
-async def process_time(message: types.Message, state: FSMContext):
-    selected_time = message.text
 
-    # Сохраняем выбранное время в FSM
-    await state.update_data(selected_time=selected_time)
+@booking_router.callback_query(BookingCallback.filter(F.stage == 4))
+@booking_router.message(BookingStates.date)
+async def process_time(query: CallbackQuery, state: FSMContext, callback_data: BookingCallback):
 
-    await message.answer("Выполняю запрос...")
+    """
+    Ловим callback со stage 3
+    достаем все данные из FSM
+    кидаем в функцию записи
+    ждем и отправляем статус успешности
+    сообщаем пользователю
+    """
 
-    # Получаем сохраненные данные из FSM
-    data = await state.get_data()
-    booking_date = data.get("booking_date")
-    selected_machine = data.get("selected_machine")
+    await state.clear()
 
-    # Логика записи в Google Sheets
-    # Перед отправкой проверить на конфликт (хер знает, сколько чел сидел в состоянии)
-    sheet = get_sheet_by_date(client, SCHEDULE_SHEET_URL, datetime.strptime(booking_date, '%d.%m.%y').date())
-    user_info = data.get("user_settings")
-    sheet.append_row([selected_time, selected_machine, user_info['Имя'], booking_date, user_info['Номер комнаты'], message.from_user.id]) # Не добавлять, а изменять
-
-    await message.answer(f"Бронирование завершено! Дата: {booking_date}, Время: {selected_time}, Машинка: {selected_machine}.", reply_markup=ReplyKeyboardRemove())
-    await state.clear()  # Завершаем состояние
