@@ -51,7 +51,7 @@ async def search_reminders(client, max_value = 72):
 
 # Задача для сортировки листов в таблице
 async def sort_sheets_by_date(client, sheet_url=SERVICE_SHEET_URL): # Неактуально, удалить
-    spreadsheet = client.open_by_url(sheet_url)
+    spreadsheet = await client.open_by_url(sheet_url)
     sheets = spreadsheet.worksheets()
 
     # Извлекаем даты из названий листов

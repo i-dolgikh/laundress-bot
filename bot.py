@@ -13,7 +13,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # Конфиги
-from configs.config import TELEGRAM_API_TOKEN, client
+from configs.config import TELEGRAM_API_TOKEN
 
 # Утилиты для google sheets
 
@@ -29,6 +29,7 @@ from jobs import (
 from handlers.settings import settings_router
 from handlers.booking import booking_router
 from handlers.basic import basic_router
+from utils.sheets_utils import connect_to_google_sheets
 
 # Тестовые импорты
 
@@ -43,7 +44,9 @@ dp = Dispatcher(storage=storage)
 scheduler = AsyncIOScheduler()
 
 
+
 async def send_reminders_job():
+    client = await connect_to_google_sheets()
     reminders = await search_reminders(client)
 
     for reminder in reminders:
@@ -51,12 +54,14 @@ async def send_reminders_job():
 
 async def sorted_job():
     try:
+        client = await connect_to_google_sheets()
         await sort_sheets_by_date(client)
     except:
         pass
 
 async def delite_old_job():
     try:
+        client = await connect_to_google_sheets()
         await delete_old_sheets(client)
     except:
         pass
@@ -95,7 +100,7 @@ async def main():
 
     scheduler.start()
 
-    dp.include_routers( basic_router, booking_router, settings_router)
+    dp.include_routers( basic_router, settings_router, booking_router)
 
     await dp.start_polling(bot, skip_updates=True)
 

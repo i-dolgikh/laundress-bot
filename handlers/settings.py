@@ -4,9 +4,9 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 
-from configs.config import client
-from configs.config import SERVICE_SHEET_URL
-from utils.sheets_utils import update_user_settings
+from configs.config import SERVICE_SHEET_URL, SERVICE_ACCOUNT_FILE
+
+from utils.sheets_utils import update_user_settings, connect_to_google_sheets
 
 settings_router = Router()
 
@@ -21,7 +21,7 @@ class SettingsStates(StatesGroup):
 @settings_router.message(Command('settings'))
 async def settings(message: types.Message, state: FSMContext):
 
-    await message.answer("Как вас зовут?")
+    await message.answer("Введите свое ФИО")
 
     # Сохраняем состояние для обработки выбора
     await state.set_state(SettingsStates.name)
@@ -67,15 +67,14 @@ async def process_notification(message: types.Message, state: FSMContext):
     # Обновляем настройки пользователя
 
     data = await state.get_data()
-    name = data.get('user_name')
-    room_number = data.get('user_room_number')
+    client =  await connect_to_google_sheets()
 
-    update_user_settings(client, SERVICE_SHEET_URL, user_id, choice, name, room_number)
+    update_user_settings(client, SERVICE_SHEET_URL, [user_id, data.get('user_name'), data.get('user_room_number'), '', choice, ''])
 
     await message.answer("Настройки обновлены", reply_markup=ReplyKeyboardRemove())
 
-    if choice != 'Отключить':
-        await message.reply(f"Напоминания будут приходить за {choice.lower()} час(ов) до стирки.")
+    if choice != 'off':
+        await message.reply(f"Напоминания будут приходить за {choice.lower()} часа(ов) до стирки.")
     else:
         await message.reply(f"Напоминания отключены")
 

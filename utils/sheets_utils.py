@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from configs.config import SERVICE_SHEET_URL, SERVICE_ACCOUNT_FILE
 
 # Подключение к Google Sheets
-def connect_to_google_sheets(service_account_file = SERVICE_ACCOUNT_FILE):
+async def connect_to_google_sheets(service_account_file = SERVICE_ACCOUNT_FILE):
     scopes = ['https://www.googleapis.com/auth/spreadsheets']
     creds = Credentials.from_service_account_file(service_account_file, scopes=scopes)
     client = gspread.authorize(creds)
@@ -63,26 +63,31 @@ def get_sheet_by_date(client, schedule_sheet_url, date): # Перенести л
 
 
 # Проверка ограничений на бронирование
-def check_booking_limits(client, sheet_url, user_id, booking_date): # Оптимизировать
+def check_booking_limits(client, sheet_url, user_id, booking_date):
     week_start = booking_date - timedelta(days=booking_date.weekday())
     week_end = week_start + timedelta(days=6)
 
     weekly_bookings = 0
+    total_booking = 0
+
     sheets = client.open_by_url(sheet_url).worksheets()
     for sheet in sheets:
         records = sheet.get_all_records()
         for record in records:
             if record['Telegram ID'] == user_id:
-                record_date = datetime.strptime(str(sheet).split("'")[1], '%d.%m.%y (%a)').date()
+                record_date = datetime.strptime(sheet.title, '%d.%m.%y (%a)').date()
+
+                total_booking += 1
 
                 if week_start <= record_date <= week_end:
                     weekly_bookings += 1
-                elif week_end < record_date:
-                    break
 
 
-    if weekly_bookings >= 2:
-        return "Вы уже забронировали 2 слота на эту неделю."
+
+        if weekly_bookings >= 2:
+            return "Вы уже забронировали 2 слота на эту неделю."
+        elif total_booking >= 4:
+            return "У вас уже есть 4 активных брони."
 
     return None
 
@@ -103,21 +108,26 @@ def update_booking_info(client, schedule_sheet_url, data):
 
 
 # Обновление настроек пользователя
-def update_user_settings(client, sheet_url, user_id, notification, name, room_number): # Реализовать через изменение, а не удаление
+def update_user_settings(client, sheet_url, new_settings):  # Реализовать через изменение, а не удаление
     """
-    Обновляет настройки пользователя: удаляет старые настройки и добавляет новые.
+    Обновляет настройки пользователя: обновляет настройки старого пользователя или добавляет нового.
+
     """
     settings_sheet = client.open_by_url(sheet_url).worksheet("users info")
-    records = settings_sheet.get_all_records()
 
-    # Поиск и удаление старой записи пользователя
-    for i, record in enumerate(records):
-        if record['Telegram ID'] == user_id:
-            # Удаляем строку (учитываем заголовок)
-            settings_sheet.delete_rows(i + 2)
-            break
+    # Поиск старой записи пользователя
+    id_cell = settings_sheet.find(query=str(new_settings[0]), in_column=1)
+    if id_cell is not None:
+        old_settings = list(settings_sheet.get_all_records()[id_cell.row - 2].values()) # '-2' - учитывая заголовок
 
-    settings_sheet.append_row([user_id, name, room_number, '', notification])
+        new_settings = [
+            new_settings[record_index]
+            if new_settings[record_index] != "" else old_settings[record_index]
+            for record_index in range(len(new_settings))
+        ]
+        settings_sheet.batch_update([{'range': 'A' + str(id_cell.row), 'values': [new_settings]}])
+    else:  # Добавляем пользователя
+        settings_sheet.append_row(new_settings)
 
 
 def get_user_settings(client, service_sheet_url, user_id):

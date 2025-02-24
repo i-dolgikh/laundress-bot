@@ -23,7 +23,7 @@ class BookingStates(StatesGroup):
 async def book_slot(message: types.Message, state: FSMContext):
 
     user_id = message.from_user.id
-    client = connect_to_google_sheets()
+    client = await connect_to_google_sheets()
 
     user_settings = get_user_settings(client, SERVICE_SHEET_URL, user_id)
 
@@ -33,11 +33,11 @@ async def book_slot(message: types.Message, state: FSMContext):
 
         if user_settings['Причина отказа'] or overdue or not user_settings["Дата последней оплаты"]:
             await message.reply(reason.format(user_settings['Причина отказа'] if user_settings['Причина отказа'] else "Просрочен месяц оплаты"))
-            await state.clear() # Зачем?
+            await state.clear() # Зачем? ладно.
             return
     except ValueError:
         await message.reply(reason.format("Неизвестная ошибка")) #Пройдет тогда, когда юзера не будет в таблице или нет инфы об оплате (Но я не уверен)
-        await state.clear() # Зачем?
+        await state.clear() # Зачем? ладно.
         return
 
 
@@ -47,6 +47,8 @@ async def book_slot(message: types.Message, state: FSMContext):
     """
 
     worksheets = client.open_by_url(SCHEDULE_SHEET_URL)
+
+    await state.update_data(client=client)
     await state.update_data(worksheets=worksheets)
 
     await start_stage(message, state)
@@ -54,7 +56,6 @@ async def book_slot(message: types.Message, state: FSMContext):
 
 @booking_router.callback_query(F.data == "Back to start stage")
 async def query_start_stage(query: CallbackQuery, state: FSMContext):
-    #await state.update_data(machine=callback_data.select)
     await start_stage(query.message, state)
 
 
@@ -76,7 +77,6 @@ async def start_stage(message: types.Message, state: FSMContext):
 
 @booking_router.callback_query(BookingCallback.filter(F.stage == 2))
 async def query_process_date(query: CallbackQuery,  callback_data: BookingCallback, state: FSMContext):
-    await query.answer("Выполняю запрос...")
     data = callback_data.select
 
     await process_date(query.message, state, data)
@@ -86,14 +86,12 @@ async def query_process_date(query: CallbackQuery,  callback_data: BookingCallba
 async def message_process_date(message: types.Message, state: FSMContext):
     data = message.text
     await message.bot.edit_message_text(text=f"Выбранная дата: {data}", message_id=message.message_id - 1, chat_id= message.chat.id) # Удаляем клавиатуру и выводим выбранную дату
-    await message.answer(text=f'{await state.get_value("test")}, {data}')
     await process_date(message, state, data)
 
 
 async def process_date(message: types.Message, state: FSMContext, data):
     booking_records = (await state.get_value("worksheets")).worksheet(data).get_all_records()
     keyboard = await kb.build_free_machine(booking_records)
-
 
     """
     Проверяем ограничения на неделю (Если ограничение нарушено await query.message.edit_text("На эту неделю вы уже забронировали 2 слота" и завершаем сосотояние return))
@@ -102,19 +100,17 @@ async def process_date(message: types.Message, state: FSMContext, data):
     регистрируем новое состояние
     """
 
-    await message.edit_text(text=f'{await state.get_value("test")}, {data}', reply_markup=keyboard)
+    await message.edit_text(text=f'{await state.get_value("test")}, {data}', reply_markup=keyboard) # тестовый
     await state.set_state()
 
 
 @booking_router.callback_query(BookingCallback.filter(F.stage == 3))
-
 async def process_machine(query: CallbackQuery, state: FSMContext, callback_data: BookingCallback):
 
     """
-    Ловим callback со stage 2
+    Ловим callback со stage 3
     обновляем данные в FSM
     генерируем клавиатуру по слотам
-    регистрируем новое состояние
     """
 
     await state.set_state(BookingStates.time) # Переходим к следующему состоянию
@@ -122,7 +118,6 @@ async def process_machine(query: CallbackQuery, state: FSMContext, callback_data
 
 
 @booking_router.callback_query(BookingCallback.filter(F.stage == 4))
-@booking_router.message(BookingStates.date)
 async def process_time(query: CallbackQuery, state: FSMContext, callback_data: BookingCallback):
 
     """
