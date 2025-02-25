@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta
+
 from aiogram.filters.callback_data import CallbackData
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.types import KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
@@ -14,16 +16,19 @@ async def build_free_date(worksheets):
 
 	booking_dates = []
 
-	for worksheet in worksheets[:6]:
-		if not all(map(bool, [record["Telegram ID"] for record in worksheet.get_all_records()])):
+	for worksheet in worksheets:
+		if ((datetime.strptime(worksheet.title, '%d.%m.%y (%a)').date() > datetime.now().date())
+				and (not all(map(bool, [record["Telegram ID"] for record in worksheet.get_all_records()])))): # Проверяем, чтобы было свободное время на дату
 			booking_dates.append(worksheet.title)
+		if len(booking_dates) >= 6:
+			break
 
 	if not booking_dates:
 		return "На ближайший месяц нет свободного времени"
 	else:
 		for booking_date in booking_dates:
 			keyboard.add(InlineKeyboardButton(text=booking_date,
-			                                  callback_data=BookingCallback(stage=2, select=booking_date).pack()))
+			                                  callback_data=BookingCallback(stage=2, select=booking_date[:8]).pack()))
 
 	return keyboard.adjust(2).as_markup()
 

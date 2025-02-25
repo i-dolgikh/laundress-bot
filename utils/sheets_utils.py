@@ -59,18 +59,14 @@ def get_sheet_by_date(client, schedule_sheet_url, date): # Перенести л
             return None
 
 
-
-
-
 # Проверка ограничений на бронирование
-def check_booking_limits(client, sheet_url, user_id, booking_date):
+def check_booking_limits(sheets, user_id, booking_date):
     week_start = booking_date - timedelta(days=booking_date.weekday())
     week_end = week_start + timedelta(days=6)
 
     weekly_bookings = 0
     total_booking = 0
 
-    sheets = client.open_by_url(sheet_url).worksheets()
     for sheet in sheets:
         records = sheet.get_all_records()
         for record in records:
@@ -108,7 +104,7 @@ def update_booking_info(client, schedule_sheet_url, data):
 
 
 # Обновление настроек пользователя
-def update_user_settings(client, sheet_url, new_settings):  # Реализовать через изменение, а не удаление
+def update_user_settings(client, sheet_url, new_settings):
     """
     Обновляет настройки пользователя: обновляет настройки старого пользователя или добавляет нового.
 
