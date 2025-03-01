@@ -11,7 +11,7 @@ from configs.config import SERVICE_SHEET_URL, SCHEDULE_SHEET_URL
 import keyboards.keyboards as kb
 from keyboards.keyboards import BookingCallback
 
-from utils.sheets_utils import get_user_settings, connect_to_google_sheets, check_booking_limits
+from utils.sheets_utils import get_user_settings, connect_to_google_sheets, check_booking_limits, update_booking_info
 
 booking_router = Router()
 
@@ -52,7 +52,7 @@ async def book_slot(message: types.Message, state: FSMContext):
 
     await state.update_data(client=client)
     await state.update_data(worksheets=worksheets)
-    await state.update_data()
+    await state.update_data(user_settings=user_settings)
 
     await start_stage(message, state)
 
@@ -64,7 +64,7 @@ async def query_start_stage(query: CallbackQuery, state: FSMContext):
 
 async def start_stage(message: types.Message, state: FSMContext):
 
-    kb_builder_result = await kb.build_free_date((await state.get_value("worksheets")).worksheets())
+    kb_builder_result = await kb.build_free_dates((await state.get_value("worksheets")).worksheets())
 
     if type(kb_builder_result) == str:
         await message.answer(text=kb_builder_result)
@@ -75,7 +75,7 @@ async def start_stage(message: types.Message, state: FSMContext):
             await message.edit_text(text="Введите дату в формате DD.MM.YY или выберите из ближайших свободных", reply_markup=kb_builder_result)
         except aiogram.exceptions.TelegramBadRequest:
             await message.answer(text="Введите дату в формате DD.MM.YY или выберите из ближайших свободных", reply_markup=kb_builder_result)
-        await state.update_data(machine_kb = kb_builder_result)
+        await state.update_data(date_kb = kb_builder_result)
         await state.set_state(BookingStates.date)  # Устанавливаем состояние "ожидание даты"
 
 
@@ -92,36 +92,47 @@ async def message_process_date(message: types.Message, state: FSMContext):
     await message.bot.edit_message_text(text=f"Выбранная дата: {date}", message_id=message.message_id - 1, chat_id= message.chat.id) # Удаляем клавиатуру и выводим выбранную дату
     await process_date(message, state, date)
 
+@booking_router.callback_query(F.data == "Back to machine stage")
+async def query_start_stage(query: CallbackQuery, state: FSMContext):
+    await process_date(query.message, state)
 
-async def process_date(message: types.Message, state: FSMContext, booking_date):
 
-    data = await state.get_data()
-    client = data.get('client')
-    try:
+async def process_date(message: types.Message, state: FSMContext, booking_date=None):
+
+
+
+    # try:
+    if booking_date is None:
+        booking_date = await state.get_value('selected_date')
+    else:
         booking_date = datetime.strptime(booking_date, '%d.%m.%y').date()
-        if booking_date < datetime.now().date():
 
-            await message.reply("Нельзя бронировать прошедшие даты.")
+    if booking_date < datetime.now().date():
+
+        await message.reply("Нельзя бронировать прошедшие даты.")
+        return
+    if booking_date > datetime.now().date() + timedelta(days=30):
+        await message.reply("Нельзя бронировать более чем за месяц.")
+        return
+
+    # Проверяем ограничения
+    limit_error = check_booking_limits((await state.get_value('worksheets')), message.from_user.id, booking_date)
+    if limit_error is not None:
+        try:
+            await message.edit_text(text=limit_error, reply_markup= (await state.get_value('date_kb')))
+        except:
+            await message.reply(limit_error)
             return
-        if booking_date > datetime.now().date() + timedelta(days=30):
-            await message.reply("Нельзя бронировать более чем за месяц.")
-            return
 
-        # Проверяем ограничения
-        limit_error = check_booking_limits((await state.get_value('worksheets')), message.from_user.id, booking_date)
-        if limit_error:
-            try:
-                await message.reply(limit_error)
-                return
-            except:
-                await message.edit_text(text=limit_error, reply_markup= (await state.get_value('machine_kb')))
+        await state.update_data(selected_date=booking_date)
 
-        await state.update_data(date=booking_date)
-        booking_records = (await state.get_value("worksheets")).worksheet(booking_date.strftime('%d.%m.%y (%a)')).get_all_records()
-        keyboard = await kb.build_free_machine(booking_records)
+        date_records = (await state.get_value("worksheets")).worksheet(booking_date.strftime('%d.%m.%y (%a)')).get_all_records()
+        await state.update_data(date_records=date_records)
+        keyboard = await kb.build_free_machine(date_records)
 
-    except ValueError:
-        await message.reply("Неверный формат даты. Введите дату в формате DD.MM.YY")
+    # except ValueError:
+    #     await message.reply("Неверный формат даты. Введите дату в формате DD.MM.YY")
+    #     return
 
 
     """
@@ -134,7 +145,6 @@ async def process_date(message: types.Message, state: FSMContext, booking_date):
     await message.edit_text(text=f'{await state.get_value("test")}, {booking_date}', reply_markup=keyboard) # тестовый
     await state.set_state()
 
-
 @booking_router.callback_query(BookingCallback.filter(F.stage == 3))
 async def process_machine(query: CallbackQuery, state: FSMContext, callback_data: BookingCallback):
     """
@@ -143,13 +153,22 @@ async def process_machine(query: CallbackQuery, state: FSMContext, callback_data
     генерируем клавиатуру по слотам
     """
     await query.answer()
-    kb_builder_result = await kb.build_free_slots(records)
+    await state.update_data(selected_machine=callback_data.select)
+
+
+    data = await state.get_data()
+    records = data.get('date_records')
+
+    kb_builder_result = await kb.build_free_slots(records, callback_data.select)
 
     await query.message.edit_text(text="Выберите время", reply_markup=kb_builder_result)
 
 @booking_router.callback_query(BookingCallback.filter(F.stage == 4))
 async def process_time(query: CallbackQuery, state: FSMContext, callback_data: BookingCallback):
-
+    await query.answer()
+    selected_time = callback_data.select.replace('.', ':') # костыль, потому что callback_data жалуется, что в неё нельзя вставлять ":"
+    await state.update_data(selected_time=selected_time)
+    data = await state.get_data()
     """
     Ловим callback со stage 3
     достаем все данные из FSM
@@ -157,6 +176,9 @@ async def process_time(query: CallbackQuery, state: FSMContext, callback_data: B
     ждем и отправляем статус успешности
     сообщаем пользователю
     """
+    result = await update_booking_info(data)
+
+    await query.message.edit_text(text=result)
 
     await state.clear()
 

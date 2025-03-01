@@ -7,11 +7,11 @@ from aiogram.types import KeyboardButton, InlineKeyboardButton, InlineKeyboardMa
 
 class BookingCallback(CallbackData, prefix="booking"):
 	stage: int
-	select: str = None
+	select: str
 
 
 #Создаем клавиатуру с доступными датами
-async def build_free_date(worksheets):
+async def build_free_dates(worksheets):
 	keyboard = InlineKeyboardBuilder()
 
 	booking_dates = []
@@ -45,5 +45,19 @@ async def build_free_machine(records):
 	return keyboard.adjust(1).as_markup()
 
 
-async def build_free_slots(records):
-	pass
+async def build_free_slots(records, machine):
+	keyboard = InlineKeyboardBuilder()
+	for record in records:
+
+		if not record['Telegram ID'] and record['Машинка'] == int(machine):
+			keyboard.add(InlineKeyboardButton(text=record['Время'],
+			                                  callback_data=BookingCallback(
+				                                  stage=4,
+				                                  select=str(record['Время']).replace(':', '.')).pack())) # костыль, потому что callback_data жалуется, что в неё нельзя вставлять ":"
+
+	keyboard.adjust(4)
+	keyboard.row(InlineKeyboardButton(text="Назад", callback_data="Back to machine stage"))
+
+	return keyboard.as_markup()
+
+

@@ -4,7 +4,8 @@
 import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta
-from configs.config import SERVICE_SHEET_URL, SERVICE_ACCOUNT_FILE
+from configs.config import SERVICE_SHEET_URL, SERVICE_ACCOUNT_FILE, SCHEDULE_SHEET_URL
+
 
 # Подключение к Google Sheets
 async def connect_to_google_sheets(service_account_file = SERVICE_ACCOUNT_FILE):
@@ -73,13 +74,14 @@ def check_booking_limits(sheets, user_id, booking_date):
             if record['Telegram ID'] == user_id:
                 record_date = datetime.strptime(sheet.title, '%d.%m.%y (%a)').date()
 
-                total_booking += 1
+                if record_date >= datetime.now().date():
+                    total_booking += 1
 
                 if week_start <= record_date <= week_end:
                     weekly_bookings += 1
 
 
-
+        # print(weekly_bookings, total_booking)
         if weekly_bookings >= 2:
             return "Вы уже забронировали 2 слота на эту неделю."
         elif total_booking >= 4:
@@ -88,19 +90,33 @@ def check_booking_limits(sheets, user_id, booking_date):
     return None
 
 
-def update_booking_info(client, schedule_sheet_url, data):
-    booking_date = data.get("booking_date")
-    selected_machine = data.get("selected_machine")
-    selected_time = data.get("selected_time")
-    user_info = data.get("user_settings")
+async def update_booking_info(data, schedule_sheet_url = SCHEDULE_SHEET_URL):
 
-    # Логика записи в sheets
+    try:
+        booking_date = data.get("selected_date").strftime('%d.%m.%y (%a)')  # datetime.datetime -> str
+        selected_machine = int(data.get("selected_machine"))  # str -> int
+        selected_time = data.get("selected_time")  # str
+        user_info = data.get("user_settings")  # dict
+        client = data.get("client")
 
-    test_mode = True
-    if test_mode:
-        return f"Тестовый режим: Бронирование завершено! Дата: {booking_date}, Время: {selected_time}, Машинка: {selected_machine}."
-    else:
-        return "Тестовый режим: Что-то пошло не так. Возможно, этот слот уже заняли"
+        worksheet = client.open_by_url(schedule_sheet_url).worksheet(booking_date)
+
+        records = worksheet.get_all_records()
+
+        for index, record in enumerate(records):
+            if record['Время'] == selected_time and record['Машинка'] == selected_machine:
+                if record['Telegram ID']:
+                    return "Этот слот уже заняли."
+                else:
+
+                    new_records = [selected_time, selected_machine, user_info['Имя'], datetime.now().date().strftime('%d.%m.%y'), user_info['Номер комнаты'], user_info['Telegram ID']]
+                    worksheet.batch_update([{'range': 'A' + str(index + 2), 'values': [new_records]}])
+
+                    return f"Бронирование завершено! Дата: {booking_date}, Время: {selected_time}, Машинка: {selected_machine}."
+
+    except:
+        return "Что-то пошло не так."
+
 
 
 # Обновление настроек пользователя
